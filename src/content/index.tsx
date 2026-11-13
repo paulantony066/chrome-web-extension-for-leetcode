@@ -10,6 +10,7 @@ rootContainer.id = 'lc-duel-root'
 document.body.appendChild(rootContainer)
 
 const shadowRoot = rootContainer.attachShadow({ mode: 'open' })
+
 const styleElement = document.createElement('style')
 styleElement.textContent = `
   .floating-container {
@@ -18,17 +19,60 @@ styleElement.textContent = `
   }
   .duel-avatar-badge {
     background: #1a1a1a; color: #fff;
-    padding: 10px 14px; border-radius: 30px; display: flex; align-items: center;
+    padding: 8px 10px; border-radius: 30px; display: flex; align-items: center;
     gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    cursor: pointer; border: 2px solid #ffa116;
+    cursor: pointer; border: 2px solid #e0a33a;
   }
+  .duel-avatar-badge:hover { background: #0e0d0d; }
+
   .status-badge {
-    background: #1a1a1a; color: #f39c12;
+    background: #1a1a1a; color: #d9d5cd;
     padding: 10px 14px; border-radius: 30px; display: flex; align-items: center;
     gap: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    border: 2px solid #f39c12; font-size: 13px; font-weight: bold;
+    border: 2px solid #e8e2d7; font-size: 13px; font-weight: bold;
     white-space: nowrap;
   }
+  .duel-avatar-icon {
+    width: 34px; height: 34px; object-fit: contain; display: block;
+    border-radius: 50%; background-color: #3f3f46; border: 1px solid #52525b;
+    padding: 0px; box-sizing: border-box;
+  }
+
+  /* ---------- Aang sprite ---------- */
+  .aang-stage {
+  position: fixed; right: 500px; bottom: 20px;
+  width: 200px; height: 240px;
+  pointer-events: none; z-index: 999998;
+  }
+
+  .aang-sprite {
+    position: absolute; bottom: 0;
+    background-repeat: no-repeat;
+    image-rendering: pixelated;
+    transform: scale(3); transform-origin: bottom left;
+  }
+  .aang-sprite.idle {
+    left: 48px; width: 24px; height: 34px;
+    background-image: url('${chrome.runtime.getURL('aang_idle.png')}');
+    background-size: 168px 34px;
+    animation: aangIdle 0.9s steps(7) infinite;
+  }
+  .aang-sprite.swing {
+    left: 6px; width: 64px; height: 48px;
+    background-image: url('${chrome.runtime.getURL('aang_swing.png')}');
+    background-size: 384px 48px;
+    animation: aangSwing 0.8s steps(6) infinite;
+  }
+  .aang-sprite.happy {
+    left: 0; width: 56px; height: 78px;
+    background-image: url('${chrome.runtime.getURL('aang_happy.png')}');
+    background-size: 392px 78px;
+       animation: aangHappy 1s steps(6) 1 forwards;
+  }
+  @keyframes aangIdle  { from { background-position-x: 0; } to { background-position-x: -168px; } }
+  @keyframes aangSwing { from { background-position-x: 0; } to { background-position-x: -384px; } }
+  @keyframes aangHappy { from { background-position-x: 0; } to { background-position-x: -336px; } }
+
   .status-badge.passed { color: #2ecc71; border-color: #2ecc71; }
   .status-badge.failed { color: #e74c3c; border-color: #e74c3c; }
   .status-badge.lost { color: #e74c3c; border-color: #e74c3c; background: #2c1a1a; }
@@ -52,34 +96,30 @@ styleElement.textContent = `
     transform-origin: bottom right;
     animation: macPopIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
-
   .panel.closing {
-    animation: macPopOut 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    animation: macPopOut 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
-
   @keyframes macPopIn {
     0% { opacity: 0; transform: scale(0.2) translateY(40px); }
     100% { opacity: 1; transform: scale(1) translateY(0); }
   }
-
   @keyframes macPopOut {
     0% { opacity: 1; transform: scale(1) translateY(0); }
     100% { opacity: 0; transform: scale(0.2) translateY(40px); }
   }
 
-  button { 
-    width: 100%; background: #1a1a1a; color: #ffa116; border: 2px solid #ffa116; 
+  button {
+    width: 100%; background: #1a1a1a; color: #ffa116; border: 2px solid #ffa116;
     padding: 10px; border-radius: 30px; cursor: pointer; font-weight: bold; font-size: 13px;
     transition: background 0.2s;
   }
   button:hover { background: #2a2a2a; }
-  
   button.end-btn { color: #e74c3c; border-color: #e74c3c; margin-top: 8px; }
   button.end-btn:hover { background: #2c1a1a; }
 
   select { width: 100%; background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 8px 12px; border-radius: 12px; margin-bottom: 12px; cursor: pointer; }
   .problem-box { background: #252525; padding: 10px; border-radius: 12px; margin-bottom: 12px; border: 1px dashed #ffa116; font-size: 12px; }
-  
+
   .chat-box { background: #252525; border-radius: 12px; padding: 8px; margin-bottom: 12px; border: 1px solid #444; max-height: 120px; overflow-y: auto; font-size: 11px; }
   .chat-input-row { display: flex; gap: 6px; margin-bottom: 12px; }
   .chat-input { flex: 1; background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 6px 10px; border-radius: 12px; outline: none; font-size: 11px; }
@@ -91,6 +131,7 @@ const appContainer = document.createElement('div')
 shadowRoot.appendChild(appContainer)
 
 type Verdict = 'passed' | 'failed'
+type AangMood = 'idle' | 'happy' | 'swing'
 
 let activeObserver: MutationObserver | null = null
 let activeTimer: ReturnType<typeof setTimeout> | null = null
@@ -174,10 +215,12 @@ export function InjectedWidget() {
   const [opponentStatus, setOpponentStatus] = useState<string | null>(null)
   const [selectedDifficulty, setSelectedDifficulty] = useState('All')
   const [chosenProblem, setChosenProblem] = useState<{ slug: string; difficulty: string } | null>(null)
-  
-  // Simplified chat state
+
   const [chatMessages, setChatMessages] = useState<Array<{ sender: 'You' | 'Opponent'; text: string }>>([])
   const [inputMessage, setInputMessage] = useState('')
+
+  const [aangMood, setAangMood] = useState<AangMood>('idle')
+  const moodTimeoutRef = useRef<any>(null)
 
   const socketRef = useRef<Socket | null>(null)
   const typingTimeoutRef = useRef<any>(null)
@@ -222,6 +265,7 @@ export function InjectedWidget() {
       setInMatch(true)
       setOpponentStatus(null)
       setChatMessages([])
+      setAangMood('idle')
     })
 
     newSocket.on('problem_chosen', (data: { problemSlug: string; difficulty: string }) => {
@@ -229,6 +273,8 @@ export function InjectedWidget() {
       setChosenProblem(probData)
       sessionStorage.setItem('lc_chosen_problem', JSON.stringify(probData))
       setStatusText(`Target: ${data.problemSlug}`)
+      setOpponentStatus(null)
+      setAangMood('idle')
     })
 
     newSocket.on('opponent_typing', () =>
@@ -251,15 +297,20 @@ export function InjectedWidget() {
       )
     })
 
-    newSocket.on('opponent_accepted', () => setOpponentStatus('lost'))
+    // Opponent finished first: you lose, Aang goes aggressive
+    newSocket.on('opponent_accepted', () => {
+      clearTimeout(moodTimeoutRef.current)
+      setOpponentStatus('lost')
+      setAangMood('swing')
+    })
 
-    // Receive chat message from opponent
     newSocket.on('receive_message', (data: { message: string }) => {
       setChatMessages((prev) => [...prev, { sender: 'Opponent', text: data.message }])
     })
 
     return () => {
       newSocket.close()
+      clearTimeout(moodTimeoutRef.current)
     }
   }, [])
 
@@ -302,8 +353,18 @@ export function InjectedWidget() {
       } else if (/^submit\b/.test(btnText)) {
         observeVerdict(
           (v) => {
-            if (v === 'passed') socketRef.current?.emit('solution_accepted')
-            else socketRef.current?.emit('test_result', { passed: false })
+            if (v === 'passed') {
+              socketRef.current?.emit('solution_accepted')
+              // You won: Aang celebrates once, then goes back to idle
+              setAangMood((m) => (m === 'swing' ? m : 'happy'))
+              clearTimeout(moodTimeoutRef.current)
+              moodTimeoutRef.current = setTimeout(
+                () => setAangMood((m) => (m === 'swing' ? m : 'idle')),
+                1400
+              )
+            } else {
+              socketRef.current?.emit('test_result', { passed: false })
+            }
           },
           { requirePending: true }
         )
@@ -328,9 +389,9 @@ export function InjectedWidget() {
         const parts = profileLink.getAttribute('href')?.split('/').filter(Boolean)
         if (parts && parts.length >= 2) username = parts[1]
       }
-      
+
       socketRef.current.emit('find_match', { username })
-      
+
       socketRef.current.once('match_found', (data: { roomId: string; opponentUsername: string }) => {
         sessionStorage.setItem('lc_duel_room', data.roomId)
         sessionStorage.setItem('lc_duel_opponent', data.opponentUsername)
@@ -361,6 +422,8 @@ export function InjectedWidget() {
       socketRef.current.disconnect()
       socketRef.current.connect()
     }
+    clearTimeout(moodTimeoutRef.current)
+    setAangMood('idle')
     stopObserving()
     sessionStorage.removeItem('lc_duel_room')
     sessionStorage.removeItem('lc_duel_opponent')
@@ -374,6 +437,11 @@ export function InjectedWidget() {
 
   return (
     <div>
+      {/* Aang is always on screen: idle by default, happy on your win, swing on your loss */}
+      <div className="aang-stage">
+        <div className={`aang-sprite ${aangMood}`} />
+      </div>
+
       {isOpen && (
         <div className={`panel ${isClosing ? 'closing' : ''}`}>
           <h4 style={{ margin: '0 0 8px 0', color: '#ffa116' }}>⚔️ LC Arena Lobby</h4>
@@ -400,8 +468,8 @@ export function InjectedWidget() {
               <label style={{ fontSize: '11px', color: '#ccc', display: 'block', marginBottom: '4px' }}>
                 Select Difficulty:
               </label>
-              <select 
-                value={selectedDifficulty} 
+              <select
+                value={selectedDifficulty}
                 onChange={(e) => setSelectedDifficulty(e.target.value)}
               >
                 <option value="All">All Difficulties</option>
@@ -414,7 +482,6 @@ export function InjectedWidget() {
                 🎲 Choose Problem
               </button>
 
-              {/* Simple Chat Box */}
               <div className="chat-box">
                 {chatMessages.length === 0 ? (
                   <div style={{ color: '#666', textAlign: 'center', padding: '10px 0' }}>No messages yet...</div>
@@ -432,9 +499,9 @@ export function InjectedWidget() {
               </div>
 
               <form onSubmit={handleSendMessage} className="chat-input-row">
-                <input 
-                  type="text" 
-                  className="chat-input" 
+                <input
+                  type="text"
+                  className="chat-input"
                   placeholder="Type a message..."
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
@@ -493,7 +560,11 @@ export function InjectedWidget() {
         )}
 
         <div className="duel-avatar-badge" onClick={togglePanel}>
-          <span>🥷</span>
+          <img
+            src={chrome.runtime.getURL('pngwing.com.png')}
+            alt="Hacker"
+            className="duel-avatar-icon"
+          />
           <span>{inMatch ? `Vs ${opponentName}` : 'Ready to Fight'}</span>
         </div>
       </div>
