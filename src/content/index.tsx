@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { io, Socket } from 'socket.io-client'
 
+
+const w = window as any
+w.__lcDuelDispose?.()
+
 const existingRoot = document.getElementById('lc-duel-root')
 if (existingRoot) existingRoot.remove()
 
@@ -44,7 +48,6 @@ styleElement.textContent = `
   width: 200px; height: 240px;
   pointer-events: none; z-index: 999998;
   }
-
   .aang-sprite {
     position: absolute; bottom: 0;
     background-repeat: no-repeat;
@@ -53,7 +56,7 @@ styleElement.textContent = `
   }
   .aang-sprite.idle {
     left: 48px; width: 24px; height: 34px;
-    background-image: url('${chrome.runtime.getURL('aang_idle.png')}');
+    background-image: url('${chrome.runtime.getURL('aang_idle2.png')}');
     background-size: 168px 34px;
     animation: aangIdle 0.9s steps(7) infinite;
   }
@@ -73,9 +76,52 @@ styleElement.textContent = `
   @keyframes aangSwing { from { background-position-x: 0; } to { background-position-x: -384px; } }
   @keyframes aangHappy { from { background-position-x: 0; } to { background-position-x: -336px; } }
 
+  /* ---------- Aang speech bubbles (left side of Aang) ---------- */
+  .aang-bubbles {
+    position: absolute;
+    right: calc(100% - 30px);  /* sits just left of Aang's sprite */
+    bottom: 70px;              /* around head height, tweak to taste */
+    margin-right: 14px;        /* room for the tail */
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    pointer-events: none;
+  }
+  .aang-bubble {
+    --bc: #e8e2d7;            /* border + tail colour */
+    --bg: #1a1a1a;            /* fill + tail inner colour */
+    position: relative; pointer-events: auto;
+    background: var(--bg); color: #d9d5cd;
+    border: 2px solid var(--bc); border-radius: 16px;
+    padding: 8px 12px; font-family: sans-serif; font-size: 12px; font-weight: bold;
+    display: flex; align-items: center; gap: 6px;
+    width: max-content; max-width: 220px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    transform-origin: right bottom;
+    animation: bubblePop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  /* tail: two stacked triangles pointing right toward Aang (outer = border, inner = fill) */
+  .aang-bubble::before, .aang-bubble::after {
+    content: ""; position: absolute; width: 0; height: 0; border-style: solid;
+  }
+  .aang-bubble::before {
+    right: -13px; bottom: 10px;
+    border-width: 8px 0 8px 12px;
+    border-color: transparent transparent transparent var(--bc);
+  }
+  .aang-bubble::after {
+    right: -9px; bottom: 12px;
+    border-width: 6px 0 6px 9px;
+    border-color: transparent transparent transparent var(--bg);
+  }
+  .aang-bubble.failed { --bc: #e74c3c; color: #e74c3c; }
+  .aang-bubble.lost   { --bc: #e74c3c; --bg: #2c1a1a; color: #e74c3c; }
+  .aang-bubble.warn   { --bc: #e74c3c; --bg: #2c1a1a; color: #e74c3c; flex-wrap: wrap; }
+  .aang-bubble a { color: #ffa116; text-decoration: underline; cursor: pointer; }
+  @keyframes bubblePop {
+    0%   { opacity: 0; transform: scale(0.3) translateX(20px); }
+    100% { opacity: 1; transform: scale(1) translateX(0); }
+  }
+
   .status-badge.passed { color: #2ecc71; border-color: #2ecc71; }
-  .status-badge.failed { color: #e74c3c; border-color: #e74c3c; }
-  .status-badge.lost { color: #e74c3c; border-color: #e74c3c; background: #2c1a1a; }
 
   .typing-dots { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; }
   .typing-dots span {
@@ -145,6 +191,11 @@ function parseVerdict(text: string): Verdict | null {
   if (FAIL_RE.test(text)) return 'failed'
   if (PASS_RE.test(text)) return 'passed'
   return null
+}
+
+function isOnProblemPage(slug: string): boolean {
+  const parts = window.location.pathname.split('/').filter(Boolean)
+  return parts[0] === 'problems' && parts[1] === slug
 }
 
 function stopObserving() {
@@ -222,10 +273,28 @@ export function InjectedWidget() {
   const [aangMood, setAangMood] = useState<AangMood>('idle')
   const moodTimeoutRef = useRef<any>(null)
 
+  const [onWrongPage, setOnWrongPage] = useState(false)
+  const chosenProblemRef = useRef<{ slug: string; difficulty: string } | null>(null)
+
   const socketRef = useRef<Socket | null>(null)
   const typingTimeoutRef = useRef<any>(null)
   const resultTimeoutRef = useRef<any>(null)
   const chatBottomRef = useRef<HTMLDivElement | null>(null)
+
+  const resetBattle = () => {
+    clearTimeout(moodTimeoutRef.current)
+    clearTimeout(typingTimeoutRef.current)
+    stopObserving()
+    sessionStorage.removeItem('lc_duel_room')
+    sessionStorage.removeItem('lc_duel_opponent')
+    sessionStorage.removeItem('lc_chosen_problem')
+    setAangMood('idle')
+    setInMatch(false)
+    setChosenProblem(null)
+    setOpponentStatus(null)
+    setOnWrongPage(false)
+    setChatMessages([])
+  }
 
   const togglePanel = () => {
     if (isOpen) {
@@ -239,8 +308,17 @@ export function InjectedWidget() {
     }
   }
 
+  const url="https://chrome-web-extension-backend.onrender.com"
+
   useEffect(() => {
-    const newSocket = io('http://localhost:3000')
+    // Stable per-tab player identity so the server can tell "me" from "opponent"
+    let playerId = sessionStorage.getItem('lc_duel_player')
+    if (!playerId) {
+      playerId = crypto.randomUUID()
+      sessionStorage.setItem('lc_duel_player', playerId)
+    }
+
+    const newSocket = io(url, { auth: { playerId } })
     socketRef.current = newSocket
 
     const savedRoomId = sessionStorage.getItem('lc_duel_room')
@@ -248,7 +326,6 @@ export function InjectedWidget() {
     const savedProblem = sessionStorage.getItem('lc_chosen_problem')
 
     if (savedRoomId && savedOpponent) {
-      newSocket.emit('rejoin_room', { roomId: savedRoomId })
       setInMatch(true)
       setOpponentName(savedOpponent)
       setStatusText(`Battling ${savedOpponent}`)
@@ -256,6 +333,12 @@ export function InjectedWidget() {
         setChosenProblem(JSON.parse(savedProblem))
       }
     }
+
+    // Runs on first connect AND on every auto-reconnect, so the room is always rejoined
+    newSocket.on('connect', () => {
+      const roomId = sessionStorage.getItem('lc_duel_room')
+      if (roomId) newSocket.emit('rejoin_room', { roomId })
+    })
 
     newSocket.on('match_status', (data) => setStatusText(data.message))
 
@@ -297,11 +380,16 @@ export function InjectedWidget() {
       )
     })
 
-    // Opponent finished first: you lose, Aang goes aggressive
+    // Aang  aggressive
     newSocket.on('opponent_accepted', () => {
       clearTimeout(moodTimeoutRef.current)
       setOpponentStatus('lost')
       setAangMood('swing')
+    })
+
+    newSocket.on('battle_ended', () => {
+      resetBattle()
+      setStatusText('Opponent ended the battle. Ready to queue')
     })
 
     newSocket.on('receive_message', (data: { message: string }) => {
@@ -311,6 +399,8 @@ export function InjectedWidget() {
     return () => {
       newSocket.close()
       clearTimeout(moodTimeoutRef.current)
+      clearTimeout(typingTimeoutRef.current)
+      clearTimeout(resultTimeoutRef.current)
     }
   }, [])
 
@@ -319,12 +409,30 @@ export function InjectedWidget() {
   }, [chatMessages])
 
   useEffect(() => {
+    chosenProblemRef.current = chosenProblem
+  }, [chosenProblem])
+
+  
+  useEffect(() => {
+    if (!inMatch || !chosenProblem) {
+      setOnWrongPage(false)
+      return
+    }
+    const check = () => setOnWrongPage(!isOnProblemPage(chosenProblem.slug))
+    check()
+    const id = setInterval(check, 500)
+    return () => clearInterval(id)
+  }, [inMatch, chosenProblem])
+
+  useEffect(() => {
     if (!inMatch) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
       if (target && target.closest && target.closest('.monaco-editor')) {
         if (!socketRef.current) return
+        const cp = chosenProblemRef.current
+        if (cp && !isOnProblemPage(cp.slug)) return
         socketRef.current.emit('typing')
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
@@ -341,6 +449,10 @@ export function InjectedWidget() {
 
       const btnText = button.textContent?.trim().toLowerCase() || ''
 
+      // Ignore Run/Submit unless the player is on the chosen problem
+      const cp = chosenProblemRef.current
+      if (cp && !isOnProblemPage(cp.slug)) return
+
       if (/^run\b/.test(btnText)) {
         socketRef.current.emit('run_tests')
         observeVerdict(
@@ -353,6 +465,8 @@ export function InjectedWidget() {
       } else if (/^submit\b/.test(btnText)) {
         observeVerdict(
           (v) => {
+            const cp = chosenProblemRef.current
+            if (cp && !isOnProblemPage(cp.slug)) return
             if (v === 'passed') {
               socketRef.current?.emit('solution_accepted')
               // You won: Aang celebrates once, then goes back to idle
@@ -418,27 +532,65 @@ export function InjectedWidget() {
   }
 
   const handleEndBattle = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect()
-      socketRef.current.connect()
-    }
-    clearTimeout(moodTimeoutRef.current)
-    setAangMood('idle')
-    stopObserving()
-    sessionStorage.removeItem('lc_duel_room')
-    sessionStorage.removeItem('lc_duel_opponent')
-    sessionStorage.removeItem('lc_chosen_problem')
-    setInMatch(false)
-    setChosenProblem(null)
-    setOpponentStatus(null)
-    setChatMessages([])
+    socketRef.current?.emit('end_battle')
+    resetBattle()
     setStatusText('Battle ended. Ready to queue')
   }
 
   return (
     <div>
-      {/* Aang is always on screen: idle by default, happy on your win, swing on your loss */}
+
       <div className="aang-stage">
+        <div className="aang-bubbles">
+          {inMatch && chosenProblem && onWrongPage && (
+            <div className="aang-bubble warn">
+              <span>🚫</span>
+              <span>You are not in the correct problem page</span>
+              <a href={`${window.location.origin}/problems/${encodeURIComponent(chosenProblem.slug)}/`}>
+                Go to problem
+              </a>
+            </div>
+          )}
+
+          {inMatch && opponentStatus === 'typing' && (
+            <div className="aang-bubble">
+              <span>⚡</span>
+              <span>{opponentName} is typing</span>
+              <div className="typing-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+          )}
+
+          {inMatch && opponentStatus === 'running' && (
+            <div className="aang-bubble">
+              <span>🧪</span>
+              <span>{opponentName} testing...</span>
+              <div className="typing-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+          )}
+
+          {inMatch && opponentStatus === 'failed' && (
+            <div className="aang-bubble failed">
+              <span>❌</span>
+              <span>{opponentName} tests failed</span>
+            </div>
+          )}
+
+          {inMatch && opponentStatus === 'lost' && (
+            <div className="aang-bubble lost">
+              <span>💀</span>
+              <span>You Lose! {opponentName} finished first</span>
+            </div>
+          )}
+        </div>
+
         <div className={`aang-sprite ${aangMood}`} />
       </div>
 
@@ -518,44 +670,10 @@ export function InjectedWidget() {
       )}
 
       <div className="floating-container">
-        {inMatch && opponentStatus === 'typing' && (
-          <div className="status-badge">
-            <span>⚡</span>
-            <span>{opponentName} is typing</span>
-            <div className="typing-dots">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-          </div>
-        )}
-        {inMatch && opponentStatus === 'running' && (
-          <div className="status-badge">
-            <span>🧪</span>
-            <span>{opponentName} testing...</span>
-            <div className="typing-dots">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-          </div>
-        )}
         {inMatch && opponentStatus === 'passed' && (
           <div className="status-badge passed">
             <span>✅</span>
             <span>{opponentName} tests passed!</span>
-          </div>
-        )}
-        {inMatch && opponentStatus === 'failed' && (
-          <div className="status-badge failed">
-            <span>❌</span>
-            <span>{opponentName} tests failed</span>
-          </div>
-        )}
-        {inMatch && opponentStatus === 'lost' && (
-          <div className="status-badge lost">
-            <span>💀</span>
-            <span>You Lose! {opponentName} finished first</span>
           </div>
         )}
 
@@ -572,10 +690,17 @@ export function InjectedWidget() {
   )
 }
 
-ReactDOM.createRoot(appContainer).render(
+const root = ReactDOM.createRoot(appContainer)
+root.render(
   <React.StrictMode>
     <InjectedWidget />
   </React.StrictMode>
 )
+
+// Lets the next injection of this script clean this one up completely
+w.__lcDuelDispose = () => {
+  root.unmount()
+  rootContainer.remove()
+}
 
 export {}

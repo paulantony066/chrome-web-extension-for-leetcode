@@ -19,7 +19,7 @@ export default defineManifest({
 
   web_accessible_resources: [
     {
-      resources: ['pngwing.com.png','animation.png','aang_idle.png','aang_swing.png','aang_happy.png'],
+      resources: ['pngwing.com.png','animation.png','aang_idle.png','aang_swing.png','aang_happy.png','aang_idle2.png',"fantasy_warrior/*.png"],
       matches: ['https://leetcode.com/*'],
     },
   ],
